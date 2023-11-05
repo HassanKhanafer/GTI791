@@ -1,54 +1,133 @@
 import pandas as pd
-import tkinter as tk
-from tkinter import filedialog
-from tkinter import simpledialog
 import json
+import sys
+import os
+import re
+import warnings
+from bs4 import BeautifulSoup, MarkupResemblesLocatorWarning
 
-def select_file():
-    root = tk.Tk()
-    root.withdraw()
-    file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
-    return file_path
 
-def select_output_folder():
-    root = tk.Tk()
-    root.withdraw()
-    folder_path = filedialog.askdirectory()
-    return folder_path
+warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
-def extract_info(payload, keys_to_extract):
+
+def clean_body(body):
+    if body is None:
+        return ""
+
+    body = body.replace("â€™", "'").replace("â€œ", '"').replace("â€", '"')
+
+    body = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", body)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", MarkupResemblesLocatorWarning)
+        soup = BeautifulSoup(body, "html.parser")
+    body = soup.get_text(separator=" ")
+
+    body = re.sub(r"\*\*([^\*]+)\*\*", r"\1", body)
+    body = re.sub(r"\*([^\*]+)\*", r"\1", body)
+
+    body = re.sub(r"![\[\(].*?[\]\)]", "", body)
+    body = re.sub(r"ðŸ§|ðŸ› |â€™|ðŸ¦‰", "", body)
+    body = re.sub(r"[\x80-\xFF]+", "", body)
+
+    body = re.sub(r"[^a-zA-Z0-9\s]", "", body)
+
+    body = " ".join(body.split())
+
+    return body
+
+
+def extract_info(payload):
     try:
         data = json.loads(payload)
-        pull_request = data.get('pull_request', {})
-        return {key: pull_request.get(key, '') for key in keys_to_extract}
+        pull_request = data.get("pull_request", None)
+
+        if pull_request is not None:
+            milestone_data = pull_request.get("milestone", None)
+            milestone_title = (
+                clean_body(milestone_data.get("title", "")) if milestone_data else ""
+            )
+
+            extracted_info = {
+                "Title": clean_body(pull_request.get("title", "")),
+                "Pull Request Number": pull_request.get("number", ""),
+                "State": clean_body(pull_request.get("state", "")),
+                "Author": clean_body(pull_request["user"].get("login", "")),
+                "Body": clean_body(pull_request.get("body", "")),
+                "Created At": pull_request.get("created_at", ""),
+                "Commits": pull_request.get("commits", ""),
+                "Additions": pull_request.get("additions", ""),
+                "Deletions": pull_request.get("deletions", ""),
+                "Changed Files": pull_request.get("changed_files", ""),
+                "Vulnerabilities": clean_body(pull_request.get("vulnerabilities", "")),
+                "Links": {
+                    "URL": clean_body(pull_request.get("url", "")),
+                    "HTML URL": clean_body(pull_request.get("html_url", "")),
+                    "Diff URL": clean_body(pull_request.get("diff_url", "")),
+                    "Patch URL": clean_body(pull_request.get("patch_url", "")),
+                },
+                "Reviewers": clean_body(
+                    str(pull_request.get("requested_reviewers", ""))
+                ),
+                "Labels": [
+                    clean_body(label["name"])
+                    for label in pull_request.get("labels", [])
+                ],
+                "Milestone": milestone_title,
+                "Merge Status": clean_body(str(pull_request.get("merged", ""))),
+                "Comments": pull_request.get("comments", ""),
+                "Assignees": [
+                    clean_body(assignee["login"])
+                    for assignee in pull_request.get("assignees", [])
+                ],
+                "Mergeability State": clean_body(
+                    pull_request.get("mergeable_state", "")
+                ),
+                "Merge Commit SHA": clean_body(
+                    pull_request.get("merge_commit_sha", "")
+                ),
+                "Draft Status": clean_body(str(pull_request.get("draft", ""))),
+            }
+        else:
+            extracted_info = {}
+
+        return extracted_info
     except json.JSONDecodeError:
-        return {key: '' for key in keys_to_extract}
+        return {}
+
 
 def main():
-    csv_file_path = select_file()
-    output_folder = select_output_folder()
-    
-    if csv_file_path and output_folder:
-        print(f"Processing file: {csv_file_path}")
-        output_file_name = simpledialog.askstring("Input", "Enter the output file name:")
-        
-        # Create an empty DataFrame
-        df = pd.DataFrame(columns=["project_name", "url", "id", "node_id", "html_url", "diff_url", "patch_url", "issue_url", "number", "state", "locked", "title"])
-        
-        with open(csv_file_path, mode='r', encoding='utf-8') as file:
-            csv_reader = pd.read_csv(file)
-            for _, row in csv_reader.iterrows():
-                payload = row.get('payload', '{}')
-                project_name = row.get('project_name', '').strip()
-                extracted_info = extract_info(payload, df.columns[1:])  # Exclude 'project_name' from extraction
-                extracted_info['project_name'] = project_name
-                df = pd.concat([df, pd.DataFrame([extracted_info])], ignore_index=True)
-        
-        output_file_path = f"{output_folder}/{output_file_name}.csv"
-        df.to_csv(output_file_path, index=False)
-        print("Processing complete. Output file saved.")
+    if len(sys.argv) > 1:
+        folder_path = sys.argv[1]
     else:
-        print("No file selected. Exiting.")
+        folder_path = input("Please enter the folder path: ")
+
+    if not os.path.isdir(folder_path):
+        print("The specified folder does not exist.")
+        sys.exit(1)
+
+    df_columns = list(extract_info(""))
+    df = pd.DataFrame(columns=df_columns)
+
+    for file_name in os.listdir(folder_path):
+        if file_name.endswith(".csv"):
+            csv_file_path = os.path.join(folder_path, file_name)
+            print(f"Processing file: {csv_file_path}")
+
+            with open(csv_file_path, mode="r", encoding="utf-8") as file:
+                csv_reader = pd.read_csv(file)
+                for _, row in csv_reader.iterrows():
+                    payload = row.get("payload", "{}")
+                    extracted_info = extract_info(payload)
+                    df = pd.concat(
+                        [df, pd.DataFrame([extracted_info])], ignore_index=True
+                    )
+
+    output_file_name = input("Enter the output file name (without extension): ")
+    output_file_path = os.path.join(folder_path, f"{output_file_name}.csv")
+    df.to_csv(output_file_path, index=False, sep=",", encoding="utf-8")
+    print("Processing complete. Output file saved.")
+
 
 if __name__ == "__main__":
     main()
