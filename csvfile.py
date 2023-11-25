@@ -10,6 +10,7 @@ warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
 docker_pull_requests = []
 
+
 def clean_body(body, max_line_length=None):
     if body is None:
         return ""
@@ -29,7 +30,14 @@ def clean_body(body, max_line_length=None):
     cleaned_body = re.sub(r"\*([^\*]+)\*", r"\1", cleaned_body)
     cleaned_body = re.sub(r"ðŸ§|ðŸ› |â€™|ðŸ¦‰", "", cleaned_body)
     cleaned_body = re.sub(r"[\x80-\xFF]+", "", cleaned_body)
-    cleaned_body = re.sub(r"[^a-zA-Z0-9\s|:-]", "", cleaned_body)
+    # Remove all special characters except periods and spaces
+    cleaned_body = re.sub(r"[^a-zA-Z0-9\s.]", "", cleaned_body)
+
+    # Replace double line breaks with a single line break
+    cleaned_body = re.sub(r"\n\n", "\n", cleaned_body)
+
+    # Replace line breaks with spaces
+    cleaned_body = cleaned_body.replace("\n", " ")
 
     if max_line_length and isinstance(max_line_length, int):
         lines = []
@@ -45,12 +53,26 @@ def clean_body(body, max_line_length=None):
                 current_line = word
         if current_line:
             lines.append(current_line)
-        
+
         cleaned_body = "\n".join(lines)
 
-        cleaned_body = textwrap.fill(cleaned_body, width=max_line_length, subsequent_indent="| ")
+        cleaned_body = textwrap.fill(
+            cleaned_body, width=max_line_length, subsequent_indent="| ")
 
     return cleaned_body
+
+
+# Update label mapping with labels and associated keywords
+label_keywords = {
+    "Security Patch": ["security vulnerabilities", "security fixes", "patch security"],
+    "Dependency Update": ["dependency update", "update dependencies", "update packages", "dependency upgrade"],
+    "Configuration Change": ["configuration change", "Docker config change", "modify configuration", "change Docker settings"],
+    "Storage Issue Fix": ["storage problems", "fix storage", "storage enhancements", "Docker storage fixes"],
+    "Permission Change": ["permissions change", "update authorizations", "change permissions", "authorization modifications"],
+    "Docker Image Upgrade": ["Docker image upgrade", "update Docker base image", "container image upgrade", "update container image"],
+}
+
+
 
 def extract_info(payload):
     try:
@@ -60,29 +82,11 @@ def extract_info(payload):
         if pull_request is not None:
             body = pull_request.get("body", "")
 
-            body = clean_body(body)
+            cleaned_body = clean_body(body)
 
-            docker_related_pattern = r'(Docker|docker|DOCKER)'
-
-            if re.search(docker_related_pattern, body):
-                paragraphs = [p.strip() for p in body.split('\n\n') if p.strip()]
-                cleaned_body = '\n\n'.join(paragraphs)
-
-                label_mapping = {
-                    "update": "Docker Dependency Update",
-                    "storage issue": "Docker Storage Issue Fix",
-                    "permissions": "Permission Change",
-                    "optimization": "Performance Optimization",
-                    "config": "Docker Configuration Update",
-                    "security": "Docker Security",
-                    "fix": "Docker Bug Fix",
-                    "bug": "Docker Bug Fix",
-                    # Add more keywords and labels here as needed
-                }
-
-                label_found = False
-
-                for keyword, label in label_mapping.items():
+            # Parcourir les labels et les mots-clés correspondants
+            for label, keywords in label_keywords.items():
+                for keyword in keywords:
                     if keyword in cleaned_body.lower():
                         extracted_info = {
                             "Title": clean_body(pull_request.get("title", "")),
@@ -103,40 +107,39 @@ def extract_info(payload):
                             },
                             "Label": label
                         }
-                        label_found = True
-                        break
+                        return extracted_info  # Sortir de la boucle dès qu'un label est trouvé
 
-                if not label_found:
-                    extracted_info = {
-                        "Title": clean_body(pull_request.get("title", "")),
-                        "Pull Request Number": pull_request.get("number", ""),
-                        "State": clean_body(pull_request.get("state", "")),
-                        "Author": clean_body(pull_request["user"].get("login", "")),
-                        "Body": cleaned_body,
-                        "Created At": pull_request.get("created_at", ""),
-                        "Commits": pull_request.get("commits", ""),
-                        "Additions": pull_request.get("additions", ""),
-                        "Deletions": pull_request.get("deletions", ""),
-                        "Changed Files": pull_request.get("changed_files", ""),
-                        "Links": {
-                            "URL": clean_body(pull_request.get("url", "")),
-                            "HTML URL": clean_body(pull_request.get("html_url", "")),
-                            "Diff URL": clean_body(pull_request.get("diff_url", "")),
-                            "Patch URL": clean_body(pull_request.get("patch_url", "")),
-                        },
-                        "Label": "Other Docker Fix"
-                    }
+            # Si aucun label n'est trouvé, attribuer "Other Docker Fix"
+            extracted_info = {
+                "Title": clean_body(pull_request.get("title", "")),
+                "Pull Request Number": pull_request.get("number", ""),
+                "State": clean_body(pull_request.get("state", "")),
+                "Author": clean_body(pull_request["user"].get("login", "")),
+                "Body": cleaned_body,
+                "Created At": pull_request.get("created_at", ""),
+                "Commits": pull_request.get("commits", ""),
+                "Additions": pull_request.get("additions", ""),
+                "Deletions": pull_request.get("deletions", ""),
+                "Changed Files": pull_request.get("changed_files", ""),
+                "Links": {
+                    "URL": clean_body(pull_request.get("url", "")),
+                    "HTML URL": clean_body(pull_request.get("html_url", "")),
+                    "Diff URL": clean_body(pull_request.get("diff_url", "")),
+                    "Patch URL": clean_body(pull_request.get("patch_url", "")),
+                },
+                "Label": "Other Docker Fix"
+            }
+            return extracted_info
 
-                docker_pull_requests.append(extracted_info)
-
-            else:
-                extracted_info = {}
         else:
             extracted_info = {}
 
         return extracted_info
     except json.JSONDecodeError:
         return {}
+
+
+
 
 def main():
     if len(sys.argv) > 1:
@@ -167,10 +170,13 @@ def main():
 
     df = pd.DataFrame(docker_pull_requests)
 
-    csv_output_file_name = input("Enter the CSV output file name (without extension): ")
-    csv_output_file_path = os.path.join(folder_path, f"{csv_output_file_name}.csv")
+    csv_output_file_name = input(
+        "Enter the CSV output file name (without extension): ")
+    csv_output_file_path = os.path.join(
+        folder_path, f"{csv_output_file_name}.csv")
     df.to_csv(csv_output_file_path, index=False, sep=",", encoding="utf-8")
     print("CSV output file saved.")
+
 
 if __name__ == "__main__":
     main()
