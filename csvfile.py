@@ -10,7 +10,6 @@ warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
 docker_pull_requests = []
 
-
 def clean_body(body, max_line_length=None):
     if body is None:
         return ""
@@ -33,9 +32,6 @@ def clean_body(body, max_line_length=None):
     # Remove all special characters except periods and spaces
     cleaned_body = re.sub(r"[^a-zA-Z0-9\s.]", "", cleaned_body)
 
-    # Replace double line breaks with a single line break
-    cleaned_body = re.sub(r"\n\n", "\n", cleaned_body)
-
     # Replace line breaks with spaces
     cleaned_body = cleaned_body.replace("\n", " ")
 
@@ -56,80 +52,72 @@ def clean_body(body, max_line_length=None):
 
         cleaned_body = "\n".join(lines)
 
-        cleaned_body = textwrap.fill(
-            cleaned_body, width=max_line_length, subsequent_indent="| ")
-
     return cleaned_body
-
 
 # Update label mapping with labels and associated keywords
 label_keywords = {
-    "Security Patch": ["security vulnerabilities", "security fixes", "patch security"],
-    "Dependency Update": ["dependency update", "update dependencies", "update packages", "dependency upgrade"],
-    "Configuration Change": ["configuration change", "Docker config change", "modify configuration", "change Docker settings"],
-    "Storage Issue Fix": ["storage problems", "fix storage", "storage enhancements", "Docker storage fixes"],
-    "Permission Change": ["permissions change", "update authorizations", "change permissions", "authorization modifications"],
-    "Docker Image Upgrade": ["Docker image upgrade", "update Docker base image", "container image upgrade", "update container image"],
+    "Security Patch": ["security fixes", "security vulnerabilities", "patch", "vulnerability", "secure", "threat"],
+    "Docker Image Upgrade": ["Docker base image uptodate", "upgrade to alpinelatest", "latest version of your chosen image", "Docker image upgrade", "image security"],
+    "Dependency Update": ["Keep your dependencies uptodate", "fix existing vulnerabilities", "newly disclosed vulnerabilities", "dependency update", "dependency security"],
+    "Configuration Change": ["configuration change", "Docker config change", "modify configuration", "change Docker settings", "configuration update", "settings change"],
+    "Storage Issue Fix": ["storage problems", "fix storage", "storage enhancements", "Docker storage fixes", "storage issue", "storage improvement"],
+    "Permission Change": ["permissions change", "update authorizations", "change permissions", "authorization modifications", "permission update", "authorization change"],
 }
 
+# Create a dictionary to store the count of pull requests for each label
+label_counts = {label: 0 for label in label_keywords.keys()}
 
+def assign_label(body):
+    # Initialize label as None
+    label = None
+
+    # Iterate through labels and corresponding keywords
+    for candidate_label, keywords in label_keywords.items():
+        for keyword in keywords:
+            if keyword in body.lower():
+                label = candidate_label
+                break  # Exit the loop as soon as a keyword is found
+
+    return label
 
 def extract_info(payload):
     try:
         data = json.loads(payload)
         pull_request = data.get("pull_request", None)
 
+        extracted_info = {}  # Initialize extracted_info as an empty dictionary
+
         if pull_request is not None:
             body = pull_request.get("body", "")
 
-            cleaned_body = clean_body(body)
+            # Check if the body is not None and contains Docker-related keywords or patterns
+            if body and re.search(r'(Docker|docker|DOCKER)', body):
+                # If Docker-related content is found, extract information
+                extracted_info = {
+                    "Title": clean_body(pull_request.get("title", "")),
+                    "Pull Request Number": pull_request.get("number", ""),
+                    "State": clean_body(pull_request.get("state", "")),
+                    "Author": clean_body(pull_request["user"].get("login", "")),
+                    "Body": clean_body(body),
+                    "Created At": pull_request.get("created_at", ""),
+                    "Commits": pull_request.get("commits", ""),
+                    "Additions": pull_request.get("additions", ""),
+                    "Deletions": pull_request.get("deletions", ""),
+                    "Changed Files": pull_request.get("changed_files", ""),
+                    "Links": {
+                        "URL": clean_body(pull_request.get("url", "")),
+                        "HTML URL": clean_body(pull_request.get("html_url", "")),
+                        "Diff URL": clean_body(pull_request.get("diff_url", "")),
+                        "Patch URL": clean_body(pull_request.get("patch_url", "")),
+                    }
+                }
 
-            # Parcourir les labels et les mots-clés correspondants
-            for label, keywords in label_keywords.items():
-                for keyword in keywords:
-                    if keyword in cleaned_body.lower():
-                        extracted_info = {
-                            "Title": clean_body(pull_request.get("title", "")),
-                            "Pull Request Number": pull_request.get("number", ""),
-                            "State": clean_body(pull_request.get("state", "")),
-                            "Author": clean_body(pull_request["user"].get("login", "")),
-                            "Body": cleaned_body,
-                            "Created At": pull_request.get("created_at", ""),
-                            "Commits": pull_request.get("commits", ""),
-                            "Additions": pull_request.get("additions", ""),
-                            "Deletions": pull_request.get("deletions", ""),
-                            "Changed Files": pull_request.get("changed_files", ""),
-                            "Links": {
-                                "URL": clean_body(pull_request.get("url", "")),
-                                "HTML URL": clean_body(pull_request.get("html_url", "")),
-                                "Diff URL": clean_body(pull_request.get("diff_url", "")),
-                                "Patch URL": clean_body(pull_request.get("patch_url", "")),
-                            },
-                            "Label": label
-                        }
-                        return extracted_info  # Sortir de la boucle dès qu'un label est trouvé
+                # Assign label based on keywords in the body
+                extracted_info["Label"] = assign_label(body)
 
-            # Si aucun label n'est trouvé, attribuer "Other Docker Fix"
-            extracted_info = {
-                "Title": clean_body(pull_request.get("title", "")),
-                "Pull Request Number": pull_request.get("number", ""),
-                "State": clean_body(pull_request.get("state", "")),
-                "Author": clean_body(pull_request["user"].get("login", "")),
-                "Body": cleaned_body,
-                "Created At": pull_request.get("created_at", ""),
-                "Commits": pull_request.get("commits", ""),
-                "Additions": pull_request.get("additions", ""),
-                "Deletions": pull_request.get("deletions", ""),
-                "Changed Files": pull_request.get("changed_files", ""),
-                "Links": {
-                    "URL": clean_body(pull_request.get("url", "")),
-                    "HTML URL": clean_body(pull_request.get("html_url", "")),
-                    "Diff URL": clean_body(pull_request.get("diff_url", "")),
-                    "Patch URL": clean_body(pull_request.get("patch_url", "")),
-                },
-                "Label": "Other Docker Fix"
-            }
-            return extracted_info
+                # Update the count of pull requests for the assigned label
+                if extracted_info["Label"] is not None:
+                    label_counts[extracted_info["Label"]] += 1
 
         else:
             extracted_info = {}
@@ -137,9 +125,6 @@ def extract_info(payload):
         return extracted_info
     except json.JSONDecodeError:
         return {}
-
-
-
 
 def main():
     if len(sys.argv) > 1:
@@ -177,6 +162,14 @@ def main():
     df.to_csv(csv_output_file_path, index=False, sep=",", encoding="utf-8")
     print("CSV output file saved.")
 
+    # Calculate the total number of pull requests
+    total_pull_requests = len(docker_pull_requests)
+
+    # Calculate and display the percentage for each label
+    print("Percentage of pull requests for each label:")
+    for label, count in label_counts.items():
+        percentage = (count / total_pull_requests) * 100
+        print(f"{label}: {count} pull requests ({percentage:.2f}%)")
 
 if __name__ == "__main__":
     main()
