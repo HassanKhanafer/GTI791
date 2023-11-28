@@ -5,6 +5,7 @@ import os
 import re
 import warnings
 from bs4 import BeautifulSoup, MarkupResemblesLocatorWarning
+from tqdm import tqdm
 
 warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
@@ -56,12 +57,20 @@ def clean_body(body, max_line_length=None):
 
 # Update label mapping with labels and associated keywords
 label_keywords = {
-    "Security Patch": ["security fixes", "security vulnerabilities", "patch", "vulnerability", "secure", "threat"],
     "Docker Image Upgrade": ["Docker base image uptodate", "upgrade to alpinelatest", "latest version of your chosen image", "Docker image upgrade", "image security"],
-    "Dependency Update": ["Keep your dependencies uptodate", "fix existing vulnerabilities", "newly disclosed vulnerabilities", "dependency update", "dependency security"],
-    "Configuration Change": ["configuration change", "Docker config change", "modify configuration", "change Docker settings", "configuration update", "settings change"],
-    "Storage Issue Fix": ["storage problems", "fix storage", "storage enhancements", "Docker storage fixes", "storage issue", "storage improvement"],
-    "Permission Change": ["permissions change", "update authorizations", "change permissions", "authorization modifications", "permission update", "authorization change"],
+    "Major Dependency Upgrade": ["breaking change", "major version", "upgrade to version 3.0.0", "major upgrade", "version 3.x"],
+    "Minor Dependency Upgrade": ["new features", "minor version", "upgrade to version 2.x.x", "minor upgrade", "minor release", "new functionality"],
+    "Patch Dependency Upgrade": ["bug fixes", "patch version", "upgrade to version 2.11.x", "patch upgrade", "bugfix release"],
+    "Configuration Change": [ "quality assurance", "integration testing", "test coverage", "automated testing", "test results", "CI test", "configuration change", "Docker config change", "modify configuration", "change Docker settings", "configuration update", "settings change"],
+    "Storage Issue Fix": [ "fixing the storage problem", "addressing storage concerns", "resolving storage issues", "correcting data storage", "enhancing storage security", "mitigating storage challenges", "upgrading data storage", "protecting sensitive data", " storage ", "storage issues", "storage issue"],
+    "Permission Change": [
+        "alteration of user authorizations",
+        "update of permission settings",
+        "change in user access rights",
+        "modification of authorization parameters",
+        "user permission update",
+        "revision of access control",
+    ],
 }
 
 # Create a dictionary to store the count of pull requests for each label
@@ -91,7 +100,7 @@ def extract_info(payload):
             body = pull_request.get("body", "")
 
             # Check if the body is not None and contains Docker-related keywords or patterns
-            if body and re.search(r'(Docker|docker|DOCKER)', body):
+            if body and re.search(r'(Docker|docker|DOCKER|DOCKERFILE|Dockerfile|dockerfile)', body):
                 # If Docker-related content is found, extract information
                 extracted_info = {
                     "Title": clean_body(pull_request.get("title", "")),
@@ -105,10 +114,7 @@ def extract_info(payload):
                     "Deletions": pull_request.get("deletions", ""),
                     "Changed Files": pull_request.get("changed_files", ""),
                     "Links": {
-                        "URL": clean_body(pull_request.get("url", "")),
-                        "HTML URL": clean_body(pull_request.get("html_url", "")),
-                        "Diff URL": clean_body(pull_request.get("diff_url", "")),
-                        "Patch URL": clean_body(pull_request.get("patch_url", "")),
+                        "URL": pull_request.get("url", ""),
                     }
                 }
 
@@ -146,7 +152,7 @@ def main():
 
             with open(csv_file_path, mode="r", encoding="utf-8") as file:
                 csv_reader = pd.read_csv(file)
-                for _, row in csv_reader.iterrows():
+                for _, row in tqdm(csv_reader.iterrows(), total=len(csv_reader)):  # Add tqdm here
                     payload = row.get("payload", "{}")
                     extracted_info = extract_info(payload)
 
@@ -162,13 +168,23 @@ def main():
     df.to_csv(csv_output_file_path, index=False, sep=",", encoding="utf-8")
     print("CSV output file saved.")
 
-    # Calculate the total number of pull requests
     total_pull_requests = len(docker_pull_requests)
+
+    # Calculate the total percentage of all labels
+    total_percentage = 0.0
 
     # Calculate and display the percentage for each label
     print("Percentage of pull requests for each label:")
     for label, count in label_counts.items():
+        total_percentage += (count / total_pull_requests) * 100
+
+    for label, count in label_counts.items():
         percentage = (count / total_pull_requests) * 100
+
+        # Adjust the percentage based on the total_percentage
+        if total_percentage != 100.0:
+            percentage = (percentage / total_percentage) * 100
+
         print(f"{label}: {count} pull requests ({percentage:.2f}%)")
 
 if __name__ == "__main__":
